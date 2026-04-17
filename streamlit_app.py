@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime
 from html import escape
 from pathlib import Path
+from typing import Callable
 
+import altair as alt
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from app.analytics import PLATFORM_META, PLATFORM_ORDER, load_repository_data, summarize_groups, summarize_posts
@@ -20,8 +20,10 @@ st.set_page_config(
     page_title="Social Farm Analytics",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
+
+alt.data_transformers.disable_max_rows()
 
 
 def inject_styles() -> None:
@@ -30,48 +32,188 @@ def inject_styles() -> None:
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
 
-        html, body, [class*="css"] {
-            font-family: "Manrope", sans-serif;
-        }
-
-        [data-testid="stAppViewContainer"] {
-            background:
+        :root {
+            --bg:
                 radial-gradient(circle at top left, rgba(0,119,255,0.18), transparent 30%),
                 radial-gradient(circle at top right, rgba(249,115,22,0.18), transparent 26%),
                 radial-gradient(circle at bottom left, rgba(45,212,191,0.16), transparent 24%),
                 linear-gradient(180deg, #f6f8f2 0%, #eff4ef 48%, #e8f1ee 100%);
+            --surface: rgba(255,255,255,0.80);
+            --line: rgba(148,163,184,0.18);
+            --ink: #0f172a;
+            --muted: #64748b;
+            --copy: #475569;
+        }
+
+        html, body, [class*="css"] {
+            font-family: "Manrope", sans-serif;
+            color: var(--ink);
+        }
+
+        [data-testid="stAppViewContainer"] {
+            background: var(--bg);
+        }
+
+        [data-testid="stAppViewContainer"]::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(15,23,42,0.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(15,23,42,0.035) 1px, transparent 1px);
+            background-size: 34px 34px;
+            mask-image: radial-gradient(circle at center, black 16%, transparent 78%);
+            opacity: 0.65;
         }
 
         [data-testid="stHeader"] {
             background: rgba(0, 0, 0, 0);
         }
 
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none;
+        }
+
         .block-container {
-            padding-top: 2rem;
-            padding-bottom: 3rem;
+            max-width: 1380px;
+            padding: 24px 18px 48px;
+            position: relative;
         }
 
         h1, h2, h3 {
             font-family: "Space Grotesk", sans-serif;
             letter-spacing: -0.04em;
+            color: var(--ink);
         }
 
-        [data-testid="stSidebar"] {
+        .hero {
+            border-radius: 30px;
+            padding: 28px;
             background:
-                linear-gradient(180deg, rgba(255,255,255,0.92), rgba(240,247,244,0.88));
-            border-right: 1px solid rgba(15, 23, 42, 0.06);
+                radial-gradient(circle at 0% 0%, rgba(89,195,255,0.35), transparent 28%),
+                radial-gradient(circle at 100% 0%, rgba(249,115,22,0.26), transparent 24%),
+                linear-gradient(135deg, rgba(255,255,255,0.92), rgba(244,249,247,0.82));
+            border: 1px solid rgba(255,255,255,0.92);
+            box-shadow: 0 24px 72px rgba(15,23,42,0.08);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            margin-bottom: 20px;
+        }
+
+        .hero-grid, .metric-grid, .hero-metrics {
+            display: grid;
+            gap: 16px;
+        }
+
+        .hero-grid {
+            grid-template-columns: 1.3fr 0.9fr;
+            align-items: start;
+        }
+
+        .hero-metrics,
+        .metric-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .kicker, .pill, .status, .link-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            color: #334155;
+            font-size: 13px;
+            font-weight: 700;
+            text-decoration: none;
+        }
+
+        .kicker {
+            background: rgba(15,23,42,0.05);
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        .pill, .status, .link-pill {
+            background: rgba(255,255,255,0.78);
+        }
+
+        .title {
+            margin: 16px 0 0;
+            font-size: clamp(2.6rem, 5vw, 4rem);
+            line-height: 0.98;
+        }
+
+        .copy {
+            margin: 16px 0 0;
+            color: var(--copy);
+            line-height: 1.75;
+            max-width: 760px;
+        }
+
+        .pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 18px;
+        }
+
+        .mini,
+        .metric-card {
+            border-radius: 24px;
+            padding: 16px;
+            background: rgba(255,255,255,0.84);
+            border: 1px solid rgba(255,255,255,0.95);
+            box-shadow: 0 18px 54px rgba(15,23,42,0.06);
+        }
+
+        .mini-label,
+        .metric-label {
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+        }
+
+        .mini-value,
+        .metric-value {
+            display: block;
+            margin-top: 8px;
+            font-size: 30px;
+            line-height: 1.05;
+            font-family: "Space Grotesk", sans-serif;
+            letter-spacing: -0.04em;
+        }
+
+        .mini-note,
+        .metric-note {
+            margin-top: 10px;
+            color: var(--copy);
+            line-height: 1.65;
+            font-size: 0.92rem;
         }
 
         [data-baseweb="tab-list"] {
-            gap: 0.5rem;
+            gap: 12px;
+            margin-top: 20px;
+            margin-bottom: 20px;
+            background: transparent;
         }
 
         [data-baseweb="tab"] {
-            height: 3rem;
-            padding: 0 1rem;
-            border-radius: 999px;
+            min-height: 60px;
+            padding: 0 18px;
+            border-radius: 22px;
             background: rgba(255,255,255,0.72);
-            border: 1px solid rgba(148,163,184,0.16);
+            border: 1px solid var(--line);
+            box-shadow: 0 16px 40px rgba(15,23,42,0.05);
+            color: var(--ink);
+            font-family: "Space Grotesk", sans-serif;
+            font-size: 1rem;
         }
 
         [aria-selected="true"][data-baseweb="tab"] {
@@ -79,186 +221,133 @@ def inject_styles() -> None:
             border-color: rgba(0,119,255,0.28);
         }
 
-        .hero-shell {
-            position: relative;
-            overflow: hidden;
-            border-radius: 30px;
-            padding: 2rem 2rem 1.8rem 2rem;
-            background:
-                radial-gradient(circle at 0% 0%, rgba(89,195,255,0.35), transparent 28%),
-                radial-gradient(circle at 100% 0%, rgba(249,115,22,0.26), transparent 24%),
-                linear-gradient(135deg, rgba(255,255,255,0.92), rgba(244,249,247,0.82));
-            border: 1px solid rgba(255,255,255,0.85);
-            box-shadow: 0 28px 80px rgba(15, 23, 42, 0.08);
-            margin-bottom: 1.25rem;
+        [data-testid="stVerticalBlockBorderWrapper"] {
+            background: var(--surface);
+            border: 1px solid rgba(255,255,255,0.92);
+            border-radius: 28px;
+            box-shadow: 0 24px 72px rgba(15,23,42,0.08);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            padding: 8px 12px 14px;
         }
 
-        .hero-kicker {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.45rem 0.8rem;
-            border-radius: 999px;
-            background: rgba(15, 23, 42, 0.05);
-            color: #334155;
-            font-size: 0.78rem;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
+        .card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 18px;
         }
 
-        .hero-title {
-            margin-top: 1rem;
+        .card-head h2 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+
+        .card-head p {
+            margin: 8px 0 0;
+            color: var(--copy);
+            line-height: 1.7;
+        }
+
+        .table-wrap {
+            overflow-x: auto;
+            border-radius: 22px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.72);
+        }
+
+        .dashboard-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 720px;
+        }
+
+        .dashboard-table th,
+        .dashboard-table td {
+            padding: 12px 14px;
+            text-align: left;
+            font-size: 0.92rem;
+            border-bottom: 1px solid rgba(148,163,184,0.14);
+            vertical-align: top;
+        }
+
+        .dashboard-table th {
             font-family: "Space Grotesk", sans-serif;
-            font-size: 3rem;
-            line-height: 1;
-            font-weight: 700;
-            color: #0f172a;
+            font-size: 0.95rem;
+            background: rgba(248,250,252,0.92);
+            position: sticky;
+            top: 0;
+            z-index: 1;
         }
 
-        .hero-copy {
-            margin-top: 1rem;
-            max-width: 56rem;
-            color: #475569;
-            font-size: 1rem;
+        .dashboard-table tr:hover td {
+            background: rgba(248,250,252,0.72);
+        }
+
+        .table-note {
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 0.88rem;
+        }
+
+        .empty {
+            border-radius: 24px;
+            padding: 22px;
+            background:
+                radial-gradient(circle at top left, rgba(249,115,22,0.18), transparent 28%),
+                linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,250,252,0.78));
+            border: 1px solid rgba(255,255,255,0.9);
+            color: var(--copy);
             line-height: 1.8;
         }
 
-        .hero-pills {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.6rem;
-            margin-top: 1.25rem;
+        .empty strong {
+            display: block;
+            color: var(--ink);
+            font-family: "Space Grotesk", sans-serif;
+            font-size: 1.35rem;
+            margin-bottom: 6px;
         }
 
-        .hero-pill, .status-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.48rem 0.82rem;
-            border-radius: 999px;
-            background: rgba(255,255,255,0.78);
-            border: 1px solid rgba(148,163,184,0.18);
-            color: #334155;
-            font-size: 0.82rem;
-            font-weight: 700;
+        [data-testid="stTextInput"] input,
+        [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        [data-testid="stDateInput"] input {
+            border-radius: 18px !important;
+            background: rgba(255,255,255,0.78) !important;
+            border: 1px solid var(--line) !important;
+            min-height: 48px;
         }
 
-        .metric-card {
-            position: relative;
-            overflow: hidden;
-            min-height: 9rem;
-            border-radius: 26px;
-            padding: 1.2rem 1.2rem 1.15rem 1.2rem;
-            background: rgba(255,255,255,0.80);
-            border: 1px solid rgba(255,255,255,0.92);
-            box-shadow: 0 20px 54px rgba(15, 23, 42, 0.06);
-        }
-
-        .metric-label {
-            color: #64748b;
+        label[data-testid="stWidgetLabel"] p {
+            color: var(--muted);
             font-size: 0.78rem;
             font-weight: 700;
             letter-spacing: 0.13em;
             text-transform: uppercase;
         }
 
-        .metric-value {
-            margin-top: 0.65rem;
-            color: #0f172a;
-            font-family: "Space Grotesk", sans-serif;
-            font-size: 2rem;
-            line-height: 1.05;
+        [data-testid="stVegaLiteChart"] {
+            background: transparent;
+        }
+
+        [data-testid="stDownloadButton"] button {
+            width: 100%;
+            min-height: 50px;
+            border-radius: 18px;
+            border: 1px solid rgba(0,119,255,0.18);
+            background: linear-gradient(135deg, rgba(0,119,255,0.92), rgba(14,165,233,0.88));
+            color: white;
             font-weight: 700;
+            box-shadow: 0 18px 40px rgba(0,119,255,0.22);
         }
 
-        .metric-note {
-            margin-top: 0.65rem;
-            color: #475569;
-            font-size: 0.92rem;
-            line-height: 1.6;
-        }
-
-        .section-card {
-            border-radius: 28px;
-            padding: 1.1rem 1.1rem 0.9rem 1.1rem;
-            background: rgba(255,255,255,0.78);
-            border: 1px solid rgba(255,255,255,0.9);
-            box-shadow: 0 22px 60px rgba(15, 23, 42, 0.06);
-        }
-
-        .section-title {
-            font-family: "Space Grotesk", sans-serif;
-            font-size: 1.35rem;
-            font-weight: 700;
-            color: #0f172a;
-        }
-
-        .section-copy {
-            color: #64748b;
-            margin-top: 0.35rem;
-            margin-bottom: 0.35rem;
-        }
-
-        .status-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 0.8rem;
-            margin-top: 1rem;
-        }
-
-        .platform-card {
-            border-radius: 24px;
-            padding: 1rem;
-            background: linear-gradient(180deg, rgba(255,255,255,0.88), rgba(247,250,252,0.72));
-            border: 1px solid rgba(148,163,184,0.14);
-        }
-
-        .platform-title {
-            font-family: "Space Grotesk", sans-serif;
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #0f172a;
-        }
-
-        .platform-meta {
-            margin-top: 0.45rem;
-            color: #64748b;
-            font-size: 0.9rem;
-            line-height: 1.6;
-        }
-
-        .empty-state {
-            border-radius: 28px;
-            padding: 1.6rem;
-            background:
-                radial-gradient(circle at top left, rgba(249,115,22,0.18), transparent 28%),
-                linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,250,252,0.78));
-            border: 1px solid rgba(255,255,255,0.9);
-            box-shadow: 0 20px 58px rgba(15, 23, 42, 0.06);
-        }
-
-        .empty-title {
-            font-family: "Space Grotesk", sans-serif;
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #0f172a;
-        }
-
-        .empty-copy {
-            margin-top: 0.8rem;
-            color: #475569;
-            line-height: 1.8;
-        }
-
-        .formula-box {
-            border-radius: 22px;
-            padding: 1rem;
-            background: rgba(15, 23, 42, 0.03);
-            border: 1px solid rgba(148,163,184,0.16);
-            font-size: 0.95rem;
-            line-height: 1.7;
-            color: #334155;
+        @media (max-width: 980px) {
+            .hero-grid,
+            .hero-metrics,
+            .metric-grid {
+                grid-template-columns: 1fr;
+            }
         }
         </style>
         """,
@@ -272,10 +361,14 @@ def get_repository_data(base_dir: str) -> dict[str, object]:
 
 
 def fmt_int(value: float | int) -> str:
+    if pd.isna(value):
+        return "0"
     return f"{int(round(float(value))):,}".replace(",", " ")
 
 
 def fmt_float(value: float | int, digits: int = 2) -> str:
+    if pd.isna(value):
+        return "0"
     return f"{float(value):,.{digits}f}".replace(",", " ").replace(".", ",")
 
 
@@ -283,31 +376,25 @@ def fmt_pct(value: float | int, digits: int = 2) -> str:
     return f"{fmt_float(value, digits)}%"
 
 
-def fmt_date(value: object) -> str:
+def fmt_date(value: object, pattern: str = "%d.%m.%Y") -> str:
     if pd.isna(value):
-        return "нет данных"
-    return pd.Timestamp(value).strftime("%d.%m.%Y")
+        return "Нет даты"
+    return pd.Timestamp(value).strftime(pattern)
 
 
-def style_figure(fig: go.Figure) -> go.Figure:
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=14, r=14, t=24, b=14),
-        font=dict(family="Manrope", color="#334155"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, title=None),
-        hoverlabel=dict(
-            bgcolor="rgba(15,23,42,0.92)",
-            bordercolor="rgba(255,255,255,0.14)",
-            font=dict(color="#E2E8F0"),
-        ),
-    )
-    fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(gridcolor="rgba(148,163,184,0.18)", zeroline=False)
-    return fig
+def clip_text(value: object, limit: int = 120) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    text = str(value).strip()
+    if not text:
+        return "—"
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 1].rstrip()}…"
 
 
-def metric_card(label: str, value: str, note: str) -> str:
+def metric_card_html(label: str, value: str, note: str) -> str:
     return f"""
         <div class="metric-card">
             <div class="metric-label">{escape(label)}</div>
@@ -317,574 +404,620 @@ def metric_card(label: str, value: str, note: str) -> str:
     """
 
 
-def platform_status_card(platform: dict[str, object], summary: dict[str, object]) -> str:
-    status = "Активна" if platform["has_data"] else "Ждёт CSV"
-    accent = platform["color"] if platform["has_data"] else "#94A3B8"
-    files_label = f"{len(platform['files'])} CSV"
+def mini_metric_html(label: str, value: str, note: str) -> str:
     return f"""
-        <div class="platform-card" style="box-shadow: inset 0 0 0 1px {accent}18;">
-            <div class="status-pill" style="border-color:{accent}33;">{escape(status)} • {escape(files_label)}</div>
-            <div class="platform-title" style="margin-top:0.8rem;">{escape(platform['label'])}</div>
-            <div class="platform-meta">
-                {escape(platform['description'])}<br/>
-                Папка: {escape(platform['folder_path'])}
-            </div>
-            <div class="platform-meta" style="margin-top:0.8rem;">
-                Постов: {fmt_int(summary['posts'])} • Просмотров: {fmt_int(summary['total_media_views'])}
-            </div>
+        <div class="mini">
+            <div class="mini-label">{escape(label)}</div>
+            <div class="mini-value">{escape(value)}</div>
+            <div class="mini-note">{escape(note)}</div>
         </div>
     """
 
 
-def filter_posts(
-    posts: pd.DataFrame,
-    platform_keys: list[str],
-    account_names: list[str],
-    media_kinds: list[str],
-    period_start: date,
-    period_end: date,
-) -> pd.DataFrame:
-    if posts.empty:
-        return posts.copy()
-
-    filtered = posts.copy()
-    filtered = filtered[filtered["platform_key"].isin(platform_keys)]
-    if account_names:
-        filtered = filtered[filtered["account_name"].isin(account_names)]
-    if media_kinds:
-        filtered = filtered[filtered["media_kind"].fillna("без типа").isin(media_kinds)]
-
-    start_ts = pd.Timestamp(period_start)
-    end_ts = pd.Timestamp(period_end)
-    filtered = filtered[filtered["published_day"].between(start_ts, end_ts)]
-    return filtered.reset_index(drop=True)
+def render_metric_grid(metrics: list[tuple[str, str, str]]) -> None:
+    cards = "".join(metric_card_html(label, value, note) for label, value, note in metrics)
+    st.markdown(f'<div class="metric-grid">{cards}</div>', unsafe_allow_html=True)
 
 
-def render_hero(summary: dict[str, object], active_platforms_count: int) -> None:
+def render_card_header(title: str, subtitle: str, status: str | None = None) -> None:
+    status_html = f'<span class="status">{escape(status)}</span>' if status else ""
     st.markdown(
         f"""
-        <div class="hero-shell">
-            <div class="hero-kicker">Streamlit Cloud Ready</div>
-            <div class="hero-title">Social Farm Analytics</div>
-            <div class="hero-copy">
-                Единая витрина по соцсетям с корректной агрегацией метрик, отдельными папками под платформы
-                и красивыми дашбордами для детализации по CSV. Сейчас активен ВК-контур, а YouTube,
-                Instagram и TikTok уже готовы к подключению.
+        <div class="card-head">
+            <div>
+                <h2>{escape(title)}</h2>
+                <p>{escape(subtitle)}</p>
             </div>
-            <div class="hero-pills">
-                <span class="hero-pill">Активных платформ: {fmt_int(active_platforms_count)}</span>
-                <span class="hero-pill">Постов в текущем фильтре: {fmt_int(summary["posts"])}</span>
-                <span class="hero-pill">Период: {fmt_date(summary["start_at"])} → {fmt_date(summary["end_at"])}</span>
-                <span class="hero-pill">Weighted ER View: {fmt_pct(summary["weighted_er_view"])}</span>
-            </div>
+            {status_html}
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-def build_platform_summary_frame(
-    filtered_posts: pd.DataFrame, platforms: dict[str, dict[str, object]]
-) -> pd.DataFrame:
+def render_empty(message: str, title: str = "Пока пусто") -> None:
+    st.markdown(
+        f"""
+        <div class="empty">
+            <strong>{escape(title)}</strong>
+            {escape(message)}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def link_html(label: str, url: object) -> str:
+    if url is None or pd.isna(url) or not str(url).strip():
+        return escape(label)
+    return f'<a class="link-pill" href="{escape(str(url))}" target="_blank">{escape(label)}</a>'
+
+
+def safe_str(value: object, fallback: str = "—") -> str:
+    if value is None or pd.isna(value):
+        return fallback
+    text = str(value).strip()
+    return text or fallback
+
+
+def render_html_table(
+    frame: pd.DataFrame,
+    *,
+    formatters: dict[str, Callable[[object], str]] | None = None,
+    raw_html_columns: set[str] | None = None,
+    truncate_columns: dict[str, int] | None = None,
+    empty_message: str = "Под текущую выборку нет строк.",
+    note: str | None = None,
+) -> None:
+    if frame.empty:
+        render_empty(empty_message)
+        return
+
+    formatters = formatters or {}
+    raw_html_columns = raw_html_columns or set()
+    truncate_columns = truncate_columns or {}
+
+    header_html = "".join(f"<th>{escape(str(column))}</th>" for column in frame.columns)
+    rows: list[str] = []
+
+    for _, row in frame.iterrows():
+        cells: list[str] = []
+        for column in frame.columns:
+            value = row[column]
+            if column in formatters:
+                rendered = formatters[column](value)
+            elif value is None or pd.isna(value):
+                rendered = "—"
+            else:
+                rendered = str(value)
+
+            if column not in raw_html_columns:
+                rendered = clip_text(rendered, truncate_columns.get(column, 10_000))
+                rendered_html = escape(rendered)
+            else:
+                rendered_html = str(rendered)
+
+            cells.append(f"<td>{rendered_html}</td>")
+        rows.append(f"<tr>{''.join(cells)}</tr>")
+
+    note_html = f'<div class="table-note">{escape(note)}</div>' if note else ""
+    st.markdown(
+        f"""
+        <div class="table-wrap">
+            <table class="dashboard-table">
+                <thead><tr>{header_html}</tr></thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </div>
+        {note_html}
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def build_platform_summary_frame(posts: pd.DataFrame, platforms: dict[str, dict[str, object]]) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for key in PLATFORM_ORDER:
-        platform_posts = filtered_posts[filtered_posts["platform_key"] == key]
+        platform_posts = posts[posts["platform_key"] == key] if not posts.empty else posts
         summary = summarize_posts(platform_posts)
         meta = platforms[key]
         rows.append(
             {
                 "Платформа": meta["label"],
-                "Статус": "Активна" if meta["has_data"] else "Ждёт CSV",
-                "Папка": meta["folder"],
+                "Статус": "Активна" if meta["has_data"] else "Ждет CSV",
+                "Папка": meta["folder_path"],
                 "Посты": summary["posts"],
-                "Аккаунты": summary["accounts"],
-                "Подписчики": summary["subscribers_total"],
                 "Просмотры": summary["total_media_views"],
-                "Лайки": summary["total_media_likes"],
-                "Репосты": summary["total_reposts"],
-                "Комментарии": summary["total_comments"],
-                "Средние просмотры": summary["avg_media_views"],
-                "Weighted ER View": summary["weighted_er_view"],
-                "Weighted ER Post": summary["weighted_er_post"],
-                "Weighted VR Post": summary["weighted_vr_post"],
+                "Средние": summary["avg_media_views"],
+                "ER View": summary["weighted_er_view"],
+                "ER Post": summary["weighted_er_post"],
             }
         )
     return pd.DataFrame(rows)
 
 
-def build_overview_timeseries(filtered_posts: pd.DataFrame) -> pd.DataFrame:
-    if filtered_posts.empty:
-        return pd.DataFrame(columns=["published_day", "platform_label", "media_views", "media_engagements", "posts"])
-    return (
-        filtered_posts.groupby(["published_day", "platform_label"], dropna=False)
-        .agg(
-            media_views=("media_views", "sum"),
-            media_engagements=("media_engagements", "sum"),
-            posts=("post_url", "count"),
-        )
-        .reset_index()
-        .sort_values("published_day")
+def build_top_posts_table(posts: pd.DataFrame, limit: int = 10) -> pd.DataFrame:
+    if posts.empty:
+        return pd.DataFrame(columns=["Пост", "Дата", "Просмотры", "Лайки", "Репосты", "ER View"])
+
+    top_posts = (
+        posts.sort_values(["media_views", "published_at"], ascending=[False, False])
+        .head(limit)
+        .copy()
     )
-
-
-def build_overview_charts(
-    filtered_posts: pd.DataFrame, platforms: dict[str, dict[str, object]]
-) -> tuple[go.Figure, go.Figure]:
-    overview_ts = build_overview_timeseries(filtered_posts)
-    if overview_ts.empty:
-        return go.Figure(), go.Figure()
-
-    platform_color_map = {PLATFORM_META[key]["label"]: PLATFORM_META[key]["color"] for key in PLATFORM_ORDER}
-
-    fig_area = px.area(
-        overview_ts,
-        x="published_day",
-        y="media_views",
-        color="platform_label",
-        color_discrete_map=platform_color_map,
-        markers=False,
-        labels={
-            "published_day": "Дата",
-            "media_views": "Просмотры",
-            "platform_label": "Платформа",
-        },
+    labels = top_posts.apply(
+        lambda row: link_html(
+            f"{safe_str(row['account_name'], 'Аккаунт')} / {safe_str(row['post_code'], 'post')}",
+            row["post_url"],
+        ),
+        axis=1,
     )
-    fig_area.update_traces(mode="lines", line_width=3)
-    style_figure(fig_area)
-
-    summary_frame = build_platform_summary_frame(filtered_posts, platforms)
-    fig_bar = px.bar(
-        summary_frame,
-        x="Платформа",
-        y="Просмотры",
-        color="Платформа",
-        color_discrete_map=platform_color_map,
-        text="Посты",
-        labels={"Просмотры": "Просмотры", "Посты": "Посты"},
-    )
-    fig_bar.update_traces(textposition="outside")
-    style_figure(fig_bar)
-    return fig_area, fig_bar
-
-
-def build_vk_daily_charts(vk_posts: pd.DataFrame) -> tuple[go.Figure, go.Figure, go.Figure]:
-    if vk_posts.empty:
-        return go.Figure(), go.Figure(), go.Figure()
-
-    daily_account = (
-        vk_posts.groupby(["published_day", "account_name"], dropna=False)
-        .agg(
-            media_views=("media_views", "sum"),
-            media_engagements=("media_engagements", "sum"),
-            posts=("post_url", "count"),
-        )
-        .reset_index()
-        .sort_values("published_day")
-    )
-
-    account_colors = {
-        account: PALETTE[index % len(PALETTE)]
-        for index, account in enumerate(daily_account["account_name"].dropna().unique())
-    }
-
-    fig_views = px.area(
-        daily_account,
-        x="published_day",
-        y="media_views",
-        color="account_name",
-        color_discrete_map=account_colors,
-        labels={"published_day": "Дата", "media_views": "Просмотры", "account_name": "Аккаунт"},
-    )
-    fig_views.update_traces(mode="lines", line_width=2.8)
-    style_figure(fig_views)
-
-    fig_eng = px.bar(
-        daily_account,
-        x="published_day",
-        y="media_engagements",
-        color="account_name",
-        color_discrete_map=account_colors,
-        barmode="stack",
-        labels={"published_day": "Дата", "media_engagements": "Реакции", "account_name": "Аккаунт"},
-    )
-    style_figure(fig_eng)
-
-    fig_scatter = px.scatter(
-        vk_posts.sort_values("published_at"),
-        x="published_at",
-        y="media_views",
-        size="media_engagements",
-        color="account_name",
-        color_discrete_map=account_colors,
-        hover_name="account_name",
-        hover_data={
-            "published_at": "|%d.%m.%Y %H:%M",
-            "media_views": ":,.0f",
-            "media_engagements": ":,.0f",
-            "post_url": True,
-        },
-        labels={
-            "published_at": "Дата",
-            "media_views": "Просмотры",
-            "media_engagements": "Реакции",
-            "account_name": "Аккаунт",
-        },
-    )
-    fig_scatter.update_traces(marker=dict(line=dict(width=1, color="rgba(255,255,255,0.65)"), opacity=0.8))
-    style_figure(fig_scatter)
-
-    return fig_views, fig_eng, fig_scatter
-
-
-def build_vk_account_bar(account_summary: pd.DataFrame) -> go.Figure:
-    if account_summary.empty:
-        return go.Figure()
-
-    chart_frame = account_summary.rename(
-        columns={
-            "account_name": "Аккаунт",
-            "total_media_views": "Просмотры",
-            "avg_media_views": "Средние просмотры",
-            "weighted_er_view": "Weighted ER View",
+    return pd.DataFrame(
+        {
+            "Пост": labels,
+            "Дата": top_posts["published_at"].map(lambda value: fmt_date(value, "%d.%m.%Y %H:%M")),
+            "Просмотры": top_posts["media_views"],
+            "Лайки": top_posts["media_likes"],
+            "Репосты": top_posts["reposts"],
+            "ER View": top_posts["er_view_calc"],
         }
     )
-    fig = px.bar(
-        chart_frame,
-        x="Аккаунт",
-        y="Просмотры",
-        color="Аккаунт",
-        color_discrete_sequence=PALETTE,
-        hover_data={"Средние просмотры": ":,.2f", "Weighted ER View": ":,.2f"},
-        labels={"Просмотры": "Просмотры"},
+
+
+def build_vk_accounts_table(vk_posts: pd.DataFrame) -> pd.DataFrame:
+    account_summary = summarize_groups(vk_posts, "account_name")
+    if account_summary.empty:
+        return pd.DataFrame(
+            columns=["Аккаунт", "Посты", "Подписчики", "Просмотры", "Средние", "ER View", "ER Post", "Последний пост"]
+        )
+
+    return pd.DataFrame(
+        {
+            "Аккаунт": account_summary["account_name"],
+            "Посты": account_summary["posts"],
+            "Подписчики": account_summary["subscribers_total"],
+            "Просмотры": account_summary["total_media_views"],
+            "Средние": account_summary["avg_media_views"],
+            "ER View": account_summary["weighted_er_view"],
+            "ER Post": account_summary["weighted_er_post"],
+            "Последний пост": account_summary["last_post_at"].map(lambda value: fmt_date(value, "%d.%m.%Y %H:%M")),
+        }
     )
-    fig.update_traces(texttemplate="%{y:,.0f}", textposition="outside")
-    style_figure(fig)
-    return fig
 
 
-def build_top_posts_table(posts: pd.DataFrame, limit: int = 15) -> pd.DataFrame:
+def filter_posts_for_posts_tab(
+    posts: pd.DataFrame,
+    *,
+    query: str,
+    platform_label: str,
+    account_name: str,
+    media_kind: str,
+) -> pd.DataFrame:
+    if posts.empty:
+        return posts.copy()
+
+    filtered = posts.copy()
+    if platform_label != "Все":
+        filtered = filtered[filtered["platform_label"] == platform_label]
+    if account_name != "Все":
+        filtered = filtered[filtered["account_name"] == account_name]
+    if media_kind != "Все":
+        filtered = filtered[filtered["media_kind"].fillna("без типа") == media_kind]
+
+    if query.strip():
+        haystack = (
+            filtered["text_clean"].fillna("")
+            + " "
+            + filtered["post_url"].fillna("")
+            + " "
+            + filtered["account_name"].fillna("")
+            + " "
+            + filtered["platform_label"].fillna("")
+        )
+        filtered = filtered[haystack.str.casefold().str.contains(query.strip().casefold(), na=False)]
+
+    return filtered.sort_values(["published_at", "media_views"], ascending=[False, False]).reset_index(drop=True)
+
+
+def build_posts_table(posts: pd.DataFrame) -> pd.DataFrame:
     if posts.empty:
         return pd.DataFrame(
             columns=[
                 "Платформа",
                 "Аккаунт",
                 "Дата",
-                "Просмотры",
-                "Лайки",
+                "Тип",
+                "Media Views",
+                "Likes",
                 "Репосты",
                 "Комментарии",
-                "Weighted ER View",
-                "Ссылка",
+                "ER View",
+                "ER Post",
+                "Текст",
+                "Пост",
             ]
         )
 
-    top_posts = (
-        posts.sort_values(["media_views", "media_engagements", "published_at"], ascending=[False, False, False])
-        .head(limit)
-        .copy()
-    )
-    top_posts["Дата"] = top_posts["published_at"].dt.strftime("%d.%m.%Y %H:%M")
-    top_posts["Weighted ER View"] = top_posts["er_view_calc"].round(2)
-    return top_posts.rename(
-        columns={
-            "platform_label": "Платформа",
-            "account_name": "Аккаунт",
-            "media_views": "Просмотры",
-            "media_likes": "Лайки",
-            "reposts": "Репосты",
-            "comments": "Комментарии",
-            "post_url": "Ссылка",
+    return pd.DataFrame(
+        {
+            "Платформа": posts["platform_label"],
+            "Аккаунт": posts["account_name"],
+            "Дата": posts["published_at"].map(lambda value: fmt_date(value, "%d.%m.%Y %H:%M")),
+            "Тип": posts["media_kind"].fillna("без типа"),
+            "Media Views": posts["media_views"],
+            "Likes": posts["media_likes"],
+            "Репосты": posts["reposts"],
+            "Комментарии": posts["comments"],
+            "ER View": posts["er_view_calc"],
+            "ER Post": posts["er_post_calc"],
+            "Текст": posts["text_clean"].map(lambda value: clip_text(value, 160)),
+            "Пост": posts.apply(lambda row: link_html("Открыть", row["post_url"]), axis=1),
         }
-    )[
-        ["Платформа", "Аккаунт", "Дата", "Просмотры", "Лайки", "Репосты", "Комментарии", "Weighted ER View", "Ссылка"]
-    ]
-
-
-def build_raw_export(posts: pd.DataFrame) -> pd.DataFrame:
-    if posts.empty:
-        return posts.copy()
-
-    export = posts.copy()
-    export["published_at"] = export["published_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    export["published_day"] = export["published_day"].dt.strftime("%Y-%m-%d")
-    return export
-
-
-def render_overview_tab(
-    filtered_posts: pd.DataFrame,
-    platforms: dict[str, dict[str, object]],
-    has_source_data: bool,
-) -> None:
-    summary = summarize_posts(filtered_posts)
-    if filtered_posts.empty:
-        if has_source_data:
-            st.warning("Под текущие фильтры ничего не попало. Ослабь фильтры слева, и данные снова появятся.")
-        else:
-            st.info("Пока нет ни одной активной CSV-выгрузки. Начни с папки `data/vk`.")
-    metrics = [
-        ("Суммарные просмотры", fmt_int(summary["total_media_views"]), "Все охваты по активным CSV в текущем фильтре."),
-        ("Суммарные реакции", fmt_int(summary["total_media_engagements"]), "Лайки + репосты + комментарии по всем постам."),
-        ("Weighted ER View", fmt_pct(summary["weighted_er_view"]), "Корректный общий ER по фактическим totals, а не среднее средних."),
-        ("Weighted ER Post", fmt_pct(summary["weighted_er_post"]), "Сумма post_likes + reposts + comments делится на сумму post_views."),
-    ]
-
-    metric_columns = st.columns(4)
-    for column, (label, value, note) in zip(metric_columns, metrics):
-        with column:
-            st.markdown(metric_card(label, value, note), unsafe_allow_html=True)
-
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Статус платформ</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-copy">ВК уже подключён, остальные папки готовы и автоматически подхватят CSV после добавления.</div>', unsafe_allow_html=True)
-    status_html = "".join(
-        platform_status_card(platforms[key], summarize_posts(filtered_posts[filtered_posts["platform_key"] == key]))
-        for key in PLATFORM_ORDER
     )
-    st.markdown(f'<div class="status-grid">{status_html}</div>', unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
-    area_chart, bar_chart = build_overview_charts(filtered_posts, platforms)
-    chart_left, chart_right = st.columns([1.4, 1])
-    with chart_left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Динамика по платформам</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Показывает, как распределяется суммарный охват по дням.</div>', unsafe_allow_html=True)
-        st.plotly_chart(area_chart, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    with chart_right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Сводка по просмотрам</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Даже пустые платформы видны отдельно и не теряются из структуры проекта.</div>', unsafe_allow_html=True)
-        st.plotly_chart(bar_chart, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
-    summary_table = build_platform_summary_frame(filtered_posts, platforms)
-    top_posts = build_top_posts_table(filtered_posts, limit=20)
+def build_daily_views(posts: pd.DataFrame, series_field: str | None = None) -> pd.DataFrame:
+    if posts.empty:
+        columns = ["published_day", "media_views"]
+        if series_field:
+            columns.append(series_field)
+        return pd.DataFrame(columns=columns)
 
-    table_left, table_right = st.columns([1.1, 1])
-    with table_left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Таблица по платформам</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Здесь уже лежат totals и правильные weighted-метрики для суммарного режима.</div>', unsafe_allow_html=True)
-        st.dataframe(
-            summary_table,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Посты": st.column_config.NumberColumn(format="%d"),
-                "Аккаунты": st.column_config.NumberColumn(format="%d"),
-                "Подписчики": st.column_config.NumberColumn(format="%d"),
-                "Просмотры": st.column_config.NumberColumn(format="%d"),
-                "Лайки": st.column_config.NumberColumn(format="%d"),
-                "Репосты": st.column_config.NumberColumn(format="%d"),
-                "Комментарии": st.column_config.NumberColumn(format="%d"),
-                "Средние просмотры": st.column_config.NumberColumn(format="%.2f"),
-                "Weighted ER View": st.column_config.NumberColumn(format="%.2f%%"),
-                "Weighted ER Post": st.column_config.NumberColumn(format="%.2f%%"),
-                "Weighted VR Post": st.column_config.NumberColumn(format="%.2f"),
-            },
+    dated_posts = posts[posts["published_day"].notna()].copy()
+    if dated_posts.empty:
+        columns = ["published_day", "media_views"]
+        if series_field:
+            columns.append(series_field)
+        return pd.DataFrame(columns=columns)
+
+    group_fields = ["published_day"]
+    if series_field:
+        group_fields.append(series_field)
+
+    return (
+        dated_posts.groupby(group_fields, dropna=False)
+        .agg(media_views=("media_views", "sum"))
+        .reset_index()
+        .sort_values("published_day")
+    )
+
+
+def apply_chart_theme(chart: alt.Chart) -> alt.Chart:
+    return (
+        chart.properties(height=320)
+        .configure_view(strokeOpacity=0)
+        .configure_axis(
+            domain=False,
+            tickColor="transparent",
+            gridColor="rgba(148,163,184,0.18)",
+            gridOpacity=1,
+            labelColor="#64748b",
+            titleColor="#64748b",
+            labelFont="Manrope",
+            titleFont="Manrope",
+            titleFontWeight="normal",
         )
-        st.markdown("</div>", unsafe_allow_html=True)
-    with table_right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Топ-посты по всему стеку</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Лидеры по охвату из всех активных платформ и аккаунтов.</div>', unsafe_allow_html=True)
-        st.dataframe(
-            top_posts,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Просмотры": st.column_config.NumberColumn(format="%d"),
-                "Лайки": st.column_config.NumberColumn(format="%d"),
-                "Репосты": st.column_config.NumberColumn(format="%d"),
-                "Комментарии": st.column_config.NumberColumn(format="%d"),
-                "Weighted ER View": st.column_config.NumberColumn(format="%.2f%%"),
-                "Ссылка": st.column_config.LinkColumn(display_text="Открыть"),
-            },
+        .configure_legend(
+            orient="top",
+            title=None,
+            labelColor="#475569",
+            labelFont="Manrope",
         )
-        st.markdown("</div>", unsafe_allow_html=True)
+        .configure_background(color=None)
+    )
 
-    with st.expander("Как считаются суммарные метрики", expanded=False):
-        st.markdown(
-            """
-            <div class="formula-box">
-                <strong>Weighted ER View</strong> = сумма <code>media_likes + reposts + comments</code> / сумма <code>media_views</code> × 100.<br/>
-                <strong>Weighted ER Post</strong> = сумма <code>post_likes + reposts + comments</code> / сумма <code>post_views</code> × 100.<br/>
-                <strong>Weighted VR Post</strong> = сумма <code>media_views</code> / сумма <code>post_views</code>.<br/>
-                Это важнее обычного среднего по строкам, потому что большие посты получают больший вес и итог получается математически корректным для общей сводки.
+
+def render_total_views_chart(posts: pd.DataFrame, color: str = "#0077FF") -> None:
+    daily = build_daily_views(posts)
+    if daily.empty:
+        render_empty("В текущем наборе нет строк с датами, поэтому график пока не из чего строить.")
+        return
+
+    base = alt.Chart(daily).encode(
+        x=alt.X("published_day:T", title=None, axis=alt.Axis(format="%d.%m", grid=False)),
+        y=alt.Y("media_views:Q", title="Просмотры"),
+        tooltip=[
+            alt.Tooltip("published_day:T", title="Дата", format="%d.%m.%Y"),
+            alt.Tooltip("media_views:Q", title="Просмотры", format=",.0f"),
+        ],
+    )
+    area = base.mark_area(color=color, opacity=0.14)
+    line = base.mark_line(color=color, strokeWidth=3)
+    points = base.mark_circle(color=color, size=54)
+    st.altair_chart(apply_chart_theme(area + line + points), use_container_width=True)
+
+
+def render_multi_series_chart(posts: pd.DataFrame, series_field: str, color_map: dict[str, str]) -> None:
+    daily = build_daily_views(posts, series_field=series_field)
+    if daily.empty:
+        render_empty("В текущем наборе нет строк с датами, поэтому график пока не из чего строить.")
+        return
+
+    ordered_keys = [key for key in color_map if key in daily[series_field].astype(str).tolist()]
+    scale = alt.Scale(
+        domain=ordered_keys or list(color_map.keys()),
+        range=[color_map[key] for key in (ordered_keys or color_map.keys())],
+    )
+    base = alt.Chart(daily).encode(
+        x=alt.X("published_day:T", title=None, axis=alt.Axis(format="%d.%m", grid=False)),
+        y=alt.Y("media_views:Q", title="Просмотры"),
+        color=alt.Color(f"{series_field}:N", scale=scale),
+        tooltip=[
+            alt.Tooltip("published_day:T", title="Дата", format="%d.%m.%Y"),
+            alt.Tooltip(f"{series_field}:N", title="Серия"),
+            alt.Tooltip("media_views:Q", title="Просмотры", format=",.0f"),
+        ],
+    )
+    chart = base.mark_line(strokeWidth=3, point=alt.OverlayMarkDef(size=60, filled=True))
+    st.altair_chart(apply_chart_theme(chart), use_container_width=True)
+
+
+def render_hero(summary: dict[str, object], platforms: dict[str, dict[str, object]]) -> None:
+    active_platforms = sum(1 for key in PLATFORM_ORDER if platforms[key]["has_data"])
+    generated_at = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+    metrics_html = "".join(
+        [
+            mini_metric_html("Посты", fmt_int(summary["posts"]), f"Аккаунтов: {fmt_int(summary['accounts'])}"),
+            mini_metric_html(
+                "Подписчики",
+                fmt_int(summary["subscribers_total"]),
+                "Сумма максимальных подписчиков по текущим аккаунтам.",
+            ),
+            mini_metric_html(
+                "Средние просмотры",
+                fmt_float(summary["avg_media_views"]),
+                f"Медиана: {fmt_float(summary['median_media_views'])}",
+            ),
+            mini_metric_html(
+                "Top-3 share",
+                fmt_pct(summary["top3_view_share"]),
+                "Насколько общий охват держится на самых вирусных постах.",
+            ),
+        ]
+    )
+
+    st.markdown(
+        f"""
+        <section class="hero">
+            <div class="hero-grid">
+                <div>
+                    <div class="kicker">Streamlit Cloud • HTML-style dashboard</div>
+                    <h1 class="title">Social Farm Analytics</h1>
+                    <p class="copy">
+                        Витрина по тем же CSV, что и в статическом HTML: общий overview, ВКонтакте,
+                        отдельная вкладка со всеми постами, фильтрами и просмотрами по дням.
+                    </p>
+                    <div class="pills">
+                        <span class="pill">Собрано: {escape(generated_at)}</span>
+                        <span class="pill">Платформ активных: {fmt_int(active_platforms)}</span>
+                        <span class="pill">Постов: {fmt_int(summary["posts"])}</span>
+                        <span class="pill">Просмотров: {fmt_int(summary["total_media_views"])}</span>
+                        <span class="pill">ER View: {fmt_pct(summary["weighted_er_view"])}</span>
+                    </div>
+                </div>
+                <div class="hero-metrics">{metrics_html}</div>
             </div>
-            """,
-            unsafe_allow_html=True,
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_overview_tab(posts: pd.DataFrame, platforms: dict[str, dict[str, object]]) -> None:
+    summary = summarize_posts(posts)
+
+    with st.container(border=True):
+        render_card_header(
+            "Общий overview",
+            "Суммарные метрики, дневная динамика и сравнение платформ по текущим данным.",
+            f"{fmt_int(summary['posts'])} постов • {fmt_date(summary['start_at'])} → {fmt_date(summary['end_at'])}",
+        )
+        render_metric_grid(
+            [
+                ("Суммарные просмотры", fmt_int(summary["total_media_views"]), "Все охваты по активным CSV."),
+                ("Суммарные реакции", fmt_int(summary["total_media_engagements"]), "Лайки + репосты + комментарии."),
+                ("Weighted ER View", fmt_pct(summary["weighted_er_view"]), "Итог по totals, а не среднее средних."),
+                ("Weighted ER Post", fmt_pct(summary["weighted_er_post"]), "Сумма реакций / сумма post_views."),
+            ]
+        )
+
+    left, right = st.columns([1.3, 1])
+    with left:
+        with st.container(border=True):
+            render_card_header("Просмотры по дням", "Динамика по всем активным платформам.")
+            color_map = {PLATFORM_META[key]["label"]: PLATFORM_META[key]["color"] for key in PLATFORM_ORDER}
+            render_multi_series_chart(posts, "platform_label", color_map)
+
+    with right:
+        with st.container(border=True):
+            render_card_header("Сводка по платформам", "Totals и weighted-метрики по каждой соцсети.")
+            render_html_table(
+                build_platform_summary_frame(posts, platforms),
+                formatters={
+                    "Посты": fmt_int,
+                    "Просмотры": fmt_int,
+                    "Средние": lambda value: fmt_float(value, 2),
+                    "ER View": lambda value: fmt_pct(value, 2),
+                    "ER Post": lambda value: fmt_pct(value, 2),
+                },
+                note="Даже пустые платформы остаются в структуре проекта и оживают автоматически, когда ты добавляешь CSV в свою папку.",
+            )
+
+    with st.container(border=True):
+        render_card_header("Топ-посты", "Лучшие публикации по просмотрам среди всех активных CSV.")
+        render_html_table(
+            build_top_posts_table(posts, limit=12),
+            formatters={
+                "Просмотры": fmt_int,
+                "Лайки": fmt_int,
+                "Репосты": fmt_int,
+                "ER View": lambda value: fmt_pct(value, 2),
+            },
+            raw_html_columns={"Пост"},
+            note="Ссылки ведут прямо на исходные посты.",
         )
 
 
 def render_vk_tab(vk_posts: pd.DataFrame, vk_has_data: bool) -> None:
+    if vk_posts.empty and not vk_has_data:
+        with st.container(border=True):
+            render_empty("В папке data/vk пока нет CSV. Как только добавишь их, раздел сам оживет.", title="ВКонтакте пока не подключен")
+        return
+
     if vk_posts.empty:
-        if vk_has_data:
-            st.info("Во ВК есть данные, но текущие фильтры скрыли все строки. Ослабь фильтры слева.")
-        else:
-            st.info("В папке `data/vk` пока нет CSV. Как только добавишь их, вкладка оживёт автоматически.")
+        with st.container(border=True):
+            render_empty("Во ВК данные есть, но текущий набор строк пуст. Проверь CSV или фильтры поиска.", title="Нет строк для отображения")
         return
 
     summary = summarize_posts(vk_posts)
-    account_summary = summarize_groups(vk_posts, "account_name")
-    account_cards = st.columns(max(1, min(len(account_summary), 3)))
 
-    for column, (_, row) in zip(account_cards, account_summary.head(3).iterrows()):
-        with column:
-            st.markdown(
-                metric_card(
-                    str(row["account_name"]),
-                    fmt_int(row["total_media_views"]),
-                    f"Постов: {fmt_int(row['posts'])} • Weighted ER View: {fmt_pct(row['weighted_er_view'])}",
-                ),
-                unsafe_allow_html=True,
+    with st.container(border=True):
+        render_card_header(
+            "ВКонтакте",
+            "Текущий рабочий контур: три CSV, разбивка по аккаунтам и отдельный дневной график.",
+            f"{fmt_int(summary['accounts'])} аккаунта • {fmt_int(summary['posts'])} постов",
+        )
+        render_metric_grid(
+            [
+                ("Посты", fmt_int(summary["posts"]), "Количество публикаций в текущем VK-контуре."),
+                ("Подписчики", fmt_int(summary["subscribers_total"]), "Сумма максимальных подписчиков по каждой ферме."),
+                ("Средние просмотры", fmt_float(summary["avg_media_views"]), f"Медиана: {fmt_float(summary['median_media_views'])}"),
+                ("Top-3 share", fmt_pct(summary["top3_view_share"]), "Доля просмотров, приходящаяся на три сильнейших поста."),
+            ]
+        )
+
+    left, right = st.columns([1.3, 1])
+    with left:
+        with st.container(border=True):
+            render_card_header("VK просмотры по дням", "Разбивка по аккаунтам внутри платформы.")
+            account_names = vk_posts["account_name"].dropna().astype(str).unique().tolist()
+            account_color_map = {
+                account: PALETTE[index % len(PALETTE)]
+                for index, account in enumerate(account_names)
+            }
+            render_multi_series_chart(vk_posts, "account_name", account_color_map)
+
+    with right:
+        with st.container(border=True):
+            render_card_header("Аккаунты VK", "Сводка по каждой ферме: просмотры, средние и weighted ER.")
+            render_html_table(
+                build_vk_accounts_table(vk_posts),
+                formatters={
+                    "Посты": fmt_int,
+                    "Подписчики": fmt_int,
+                    "Просмотры": fmt_int,
+                    "Средние": lambda value: fmt_float(value, 2),
+                    "ER View": lambda value: fmt_pct(value, 2),
+                    "ER Post": lambda value: fmt_pct(value, 2),
+                },
             )
 
-    summary_row = st.columns(4)
-    summary_row[0].markdown(
-        metric_card("Постов", fmt_int(summary["posts"]), f"Аккаунтов: {fmt_int(summary['accounts'])}"),
-        unsafe_allow_html=True,
-    )
-    summary_row[1].markdown(
-        metric_card("Подписчики", fmt_int(summary["subscribers_total"]), "Сумма максимальных подписчиков по каждой ферме."),
-        unsafe_allow_html=True,
-    )
-    summary_row[2].markdown(
-        metric_card("Средние просмотры", fmt_float(summary["avg_media_views"]), f"Медиана: {fmt_float(summary['median_media_views'])}"),
-        unsafe_allow_html=True,
-    )
-    summary_row[3].markdown(
-        metric_card("Топ-3 доля", fmt_pct(summary["top3_view_share"]), "Насколько охват сконцентрирован в вирусных выбросах."),
-        unsafe_allow_html=True,
-    )
-
-    views_chart, eng_chart, scatter_chart = build_vk_daily_charts(vk_posts)
-    chart_bar = build_vk_account_bar(account_summary)
-
-    chart_left, chart_right = st.columns([1.2, 1])
-    with chart_left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Дневной охват по аккаунтам ВК</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Area chart удобно показывает и массу охвата, и изменение ритма публикаций.</div>', unsafe_allow_html=True)
-        st.plotly_chart(views_chart, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    with chart_right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Просмотры по фермам</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Сравнение общей массы трафика между тремя текущими CSV.</div>', unsafe_allow_html=True)
-        st.plotly_chart(chart_bar, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    second_left, second_right = st.columns([1, 1])
-    with second_left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Состав реакций по дням</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Stacked bar помогает быстро увидеть всплески вовлечения.</div>', unsafe_allow_html=True)
-        st.plotly_chart(eng_chart, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-    with second_right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Посты: охват против реакций</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Размер точки показывает сумму реакций, а цвет — аккаунт-источник.</div>', unsafe_allow_html=True)
-        st.plotly_chart(scatter_chart, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    account_table = account_summary.rename(
-        columns={
-            "account_name": "Аккаунт",
-            "posts": "Посты",
-            "subscribers_total": "Подписчики",
-            "total_media_views": "Просмотры",
-            "avg_media_views": "Средние просмотры",
-            "weighted_er_view": "Weighted ER View",
-            "weighted_er_post": "Weighted ER Post",
-            "avg_media_likes": "Средние лайки",
-            "avg_reposts": "Средние репосты",
-            "avg_comments": "Средние комментарии",
-            "top_post_views": "Лучший пост",
-            "last_post_at": "Последний пост",
-        }
-    )
-    if not account_table.empty:
-        account_table["Последний пост"] = pd.to_datetime(account_table["Последний пост"]).dt.strftime("%d.%m.%Y %H:%M")
-
-    top_vk_posts = build_top_posts_table(vk_posts, limit=20)
-
-    table_left, table_right = st.columns([1, 1])
-    with table_left:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Сводка по ВК-аккаунтам</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Все ключевые средние и weighted-показатели по каждой ферме.</div>', unsafe_allow_html=True)
-        st.dataframe(
-            account_table,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Посты": st.column_config.NumberColumn(format="%d"),
-                "Подписчики": st.column_config.NumberColumn(format="%d"),
-                "Просмотры": st.column_config.NumberColumn(format="%d"),
-                "Средние просмотры": st.column_config.NumberColumn(format="%.2f"),
-                "Weighted ER View": st.column_config.NumberColumn(format="%.2f%%"),
-                "Weighted ER Post": st.column_config.NumberColumn(format="%.2f%%"),
-                "Средние лайки": st.column_config.NumberColumn(format="%.2f"),
-                "Средние репосты": st.column_config.NumberColumn(format="%.2f"),
-                "Средние комментарии": st.column_config.NumberColumn(format="%.2f"),
-                "Лучший пост": st.column_config.NumberColumn(format="%d"),
+    with st.container(border=True):
+        render_card_header("Топ-посты ВКонтакте", "Быстрый просмотр сильнейших публикаций и прямые переходы в посты.")
+        render_html_table(
+            build_top_posts_table(vk_posts, limit=18),
+            formatters={
+                "Просмотры": fmt_int,
+                "Лайки": fmt_int,
+                "Репосты": fmt_int,
+                "ER View": lambda value: fmt_pct(value, 2),
             },
+            raw_html_columns={"Пост"},
         )
-        st.markdown("</div>", unsafe_allow_html=True)
-    with table_right:
-        st.markdown('<div class="section-card">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Топ-посты ВК</div>', unsafe_allow_html=True)
-        st.markdown('<div class="section-copy">Таблица для ручной проверки лучших публикаций и быстрых переходов по ссылкам.</div>', unsafe_allow_html=True)
-        st.dataframe(
-            top_vk_posts,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Просмотры": st.column_config.NumberColumn(format="%d"),
-                "Лайки": st.column_config.NumberColumn(format="%d"),
-                "Репосты": st.column_config.NumberColumn(format="%d"),
-                "Комментарии": st.column_config.NumberColumn(format="%d"),
-                "Weighted ER View": st.column_config.NumberColumn(format="%.2f%%"),
-                "Ссылка": st.column_config.LinkColumn(display_text="Открыть"),
-            },
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
 
     st.download_button(
-        "Скачать текущий фильтр ВК в CSV",
-        build_raw_export(vk_posts).to_csv(index=False).encode("utf-8-sig"),
-        file_name="vk_filtered_export.csv",
+        "Скачать все текущие строки ВК в CSV",
+        vk_posts.to_csv(index=False).encode("utf-8-sig"),
+        file_name="vk_posts_export.csv",
         mime="text/csv",
         use_container_width=True,
     )
 
 
-def render_future_platform_tab(platform_key: str, platform: dict[str, object]) -> None:
-    st.markdown(
-        f"""
-        <div class="empty-state">
-            <div class="empty-title">{escape(platform['label'])} пока не подключён</div>
-            <div class="empty-copy">
-                Папка <code>{escape(platform['folder_path'])}</code> уже создана в проекте. Как только ты положишь туда
-                один или несколько <code>.csv</code>, вкладка автоматически станет активной и появится в общей сводке.
-                Приложение сканирует все файлы в этой директории без ручной настройки.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+def render_posts_tab(all_posts: pd.DataFrame) -> None:
+    if all_posts.empty:
+        with st.container(border=True):
+            render_empty("Пока нет ни одной активной CSV-выгрузки, поэтому раздел со всеми постами еще пуст.", title="Все посты пока недоступны")
+        return
+
+    platform_options = ["Все"] + sorted(all_posts["platform_label"].dropna().astype(str).unique().tolist())
+    account_options = ["Все"] + sorted(all_posts["account_name"].dropna().astype(str).unique().tolist())
+    kind_options = ["Все"] + sorted(all_posts["media_kind"].fillna("без типа").astype(str).unique().tolist())
+
+    with st.container(border=True):
+        render_card_header("Все посты", "Поиск по тексту, фильтры и просмотры по дням по текущей выборке.")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            query = st.text_input("Поиск", placeholder="мем, AdsGram, wall-...", key="posts_query")
+        with col2:
+            selected_platform = st.selectbox("Платформа", options=platform_options, key="posts_platform")
+        with col3:
+            selected_account = st.selectbox("Аккаунт", options=account_options, key="posts_account")
+        with col4:
+            selected_kind = st.selectbox("Тип", options=kind_options, key="posts_kind")
+
+    filtered_posts = filter_posts_for_posts_tab(
+        all_posts,
+        query=query,
+        platform_label=selected_platform,
+        account_name=selected_account,
+        media_kind=selected_kind,
     )
-    st.code(f"{platform['folder_path']}/your_export.csv", language="bash")
-    with st.expander(f"Что уже готово для {platform['label']}", expanded=True):
+    filtered_summary = summarize_posts(filtered_posts)
+
+    with st.container(border=True):
+        render_card_header(
+            "Просмотры по дням по фильтру",
+            "График сразу реагирует на выбранные фильтры и поиск.",
+            f"{fmt_int(filtered_summary['posts'])} постов в выборке",
+        )
+        render_total_views_chart(filtered_posts, color="#0EA5E9")
+
+    with st.container(border=True):
+        render_card_header(
+            "Таблица постов",
+            "Новые публикации сверху, текст сокращен до превью.",
+            f"{fmt_int(filtered_summary['total_media_views'])} просмотров в выборке",
+        )
+        render_html_table(
+            build_posts_table(filtered_posts),
+            formatters={
+                "Media Views": fmt_int,
+                "Likes": fmt_int,
+                "Репосты": fmt_int,
+                "Комментарии": fmt_int,
+                "ER View": lambda value: fmt_pct(value, 2),
+                "ER Post": lambda value: fmt_pct(value, 2),
+            },
+            raw_html_columns={"Пост"},
+            truncate_columns={"Текст": 160},
+            note="Таблица уже учитывает фильтры и поиск выше.",
+        )
+
+    st.download_button(
+        "Скачать текущую выборку постов в CSV",
+        filtered_posts.to_csv(index=False).encode("utf-8-sig"),
+        file_name="filtered_posts_export.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
+def render_future_platform_tab(platform: dict[str, object]) -> None:
+    with st.container(border=True):
+        render_empty(
+            f"Папка {platform['folder_path']} уже создана. Как только ты положишь туда один или несколько CSV, эта вкладка автоматически станет активной и появится в общей сводке.",
+            title=f"{platform['label']} ждет CSV",
+        )
         st.markdown(
             f"""
-            - Структура папок уже создана.
-            - Вкладка уже заведена в интерфейсе.
-            - Общая сводка автоматически учитывает платформу, как только в `{platform['folder_path']}` появятся CSV.
-            - Сейчас статус: `{"Активна" if platform['has_data'] else "Ждёт CSV"}`.
-            """
+            <div class="table-note">
+                Текущий статус: <strong>{'Активна' if platform['has_data'] else 'Ждет CSV'}</strong>.
+                Приложение сканирует директорию <code>{escape(str(platform['folder_path']))}</code> без ручной настройки.
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
 
@@ -894,79 +1027,24 @@ def main() -> None:
     repository = get_repository_data(str(BASE_DIR))
     platforms: dict[str, dict[str, object]] = repository["platforms"]  # type: ignore[assignment]
     all_posts: pd.DataFrame = repository["all_posts"]  # type: ignore[assignment]
+    summary = summarize_posts(all_posts)
 
-    active_platform_keys = [key for key in PLATFORM_ORDER if platforms[key]["has_data"]]
-    available_platform_options = active_platform_keys or ["vk"]
+    render_hero(summary, platforms)
 
-    if all_posts.empty:
-        min_date = max_date = pd.Timestamp.today().date()
-        available_accounts: list[str] = []
-        available_media_kinds: list[str] = []
-    else:
-        min_date = all_posts["published_day"].min().date()
-        max_date = all_posts["published_day"].max().date()
-        available_accounts = sorted(all_posts["account_name"].dropna().unique().tolist())
-        available_media_kinds = sorted(all_posts["media_kind"].fillna("без типа").unique().tolist())
-
-    with st.sidebar:
-        st.markdown("## Фильтры")
-        selected_platform_keys = st.multiselect(
-            "Активные платформы",
-            options=available_platform_options,
-            default=available_platform_options,
-            format_func=lambda key: PLATFORM_META[key]["label"],
-        )
-        selected_accounts = st.multiselect(
-            "Аккаунты",
-            options=available_accounts,
-            default=available_accounts,
-        )
-        selected_media_kinds = st.multiselect(
-            "Тип медиа",
-            options=available_media_kinds,
-            default=available_media_kinds,
-        )
-        period_value = st.date_input(
-            "Период",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-        )
-        st.markdown("---")
-        st.caption("Общая вкладка и вкладка ВК пересчитываются по этим фильтрам. Будущие платформы просто ждут CSV в своих папках.")
-
-    if isinstance(period_value, tuple):
-        period_start, period_end = period_value
-    else:
-        period_start = period_end = period_value
-
-    filtered_posts = filter_posts(
-        all_posts,
-        platform_keys=selected_platform_keys,
-        account_names=selected_accounts,
-        media_kinds=selected_media_kinds,
-        period_start=period_start,
-        period_end=period_end,
-    )
-    filtered_summary = summarize_posts(filtered_posts)
-
-    render_hero(filtered_summary, active_platforms_count=len(active_platform_keys))
-
-    tabs = st.tabs(["Обзор", "ВКонтакте", "YouTube", "Instagram", "TikTok"])
+    tabs = st.tabs(["Обзор", "ВКонтакте", "Все посты", "YouTube", "Instagram", "TikTok"])
 
     with tabs[0]:
-        render_overview_tab(filtered_posts, platforms, has_source_data=not all_posts.empty)
+        render_overview_tab(all_posts, platforms)
     with tabs[1]:
-        render_vk_tab(
-            filtered_posts[filtered_posts["platform_key"] == "vk"].copy(),
-            vk_has_data=bool(platforms["vk"]["has_data"]),
-        )
+        render_vk_tab(all_posts[all_posts["platform_key"] == "vk"].copy(), bool(platforms["vk"]["has_data"]))
     with tabs[2]:
-        render_future_platform_tab("youtube", platforms["youtube"])
+        render_posts_tab(all_posts.copy())
     with tabs[3]:
-        render_future_platform_tab("instagram", platforms["instagram"])
+        render_future_platform_tab(platforms["youtube"])
     with tabs[4]:
-        render_future_platform_tab("tiktok", platforms["tiktok"])
+        render_future_platform_tab(platforms["instagram"])
+    with tabs[5]:
+        render_future_platform_tab(platforms["tiktok"])
 
 
 if __name__ == "__main__":
